@@ -121,12 +121,8 @@ function normalizeApiBaseUrl(value = "") {
     throw Object.assign(new Error("API base URL must be http(s) without credentials."), { statusCode: 400 });
   }
 
-  if (url.protocol === "http:" && !isBlockedApiHost(url.hostname)) {
-    throw Object.assign(new Error("HTTP API base URLs are only allowed for localhost during local development."), { statusCode: 400 });
-  }
-
   if (isBlockedApiHost(url.hostname) && process.env.ALLOW_PRIVATE_API_BASE !== "1") {
-    throw Object.assign(new Error("Local/private API base URLs are disabled on this server. Use a public HTTPS New API address."), { statusCode: 400 });
+    throw Object.assign(new Error("Local/private API base URLs are disabled on this server. Use a public New API address."), { statusCode: 400 });
   }
 
   url.search = "";
