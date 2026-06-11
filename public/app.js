@@ -2,7 +2,9 @@ const STORAGE = {
   sessions: "web-agent.sessions",
   activeSession: "web-agent.activeSession",
   settings: "web-agent.settings",
-  apiKey: "web-agent.apiKey"
+  apiKey: "web-agent.apiKey",
+  apiBaseUrl: "web-agent.apiBaseUrl",
+  apiMode: "web-agent.apiMode"
 };
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -34,6 +36,8 @@ const els = {
   loginForm: document.querySelector("#loginForm"),
   loginSubcopy: document.querySelector("#loginSubcopy"),
   apiKeyInput: document.querySelector("#apiKeyInput"),
+  apiBaseUrlInput: document.querySelector("#apiBaseUrlInput"),
+  apiModeSelect: document.querySelector("#apiModeSelect"),
   rememberKeyInput: document.querySelector("#rememberKeyInput"),
   settingsModal: document.querySelector("#settingsModal"),
   settingsForm: document.querySelector("#settingsForm"),
@@ -56,6 +60,8 @@ let state = {
     webSearch: false
   },
   apiKey: "",
+  apiBaseUrl: "",
+  apiMode: "responses",
   useServerKey: false,
   attachments: [],
   sending: false
@@ -81,11 +87,48 @@ function getStoredApiKey() {
   return sessionStorage.getItem(STORAGE.apiKey) || localStorage.getItem(STORAGE.apiKey) || "";
 }
 
-function setStoredApiKey(key, remember) {
+function getStoredConnection() {
+  return {
+    apiKey: getStoredApiKey(),
+    apiBaseUrl: sessionStorage.getItem(STORAGE.apiBaseUrl) || localStorage.getItem(STORAGE.apiBaseUrl) || "",
+    apiMode: sessionStorage.getItem(STORAGE.apiMode) || localStorage.getItem(STORAGE.apiMode) || "responses"
+  };
+}
+
+function setStoredConnection(connection, remember) {
   sessionStorage.removeItem(STORAGE.apiKey);
   localStorage.removeItem(STORAGE.apiKey);
-  if (!key) return;
-  (remember ? localStorage : sessionStorage).setItem(STORAGE.apiKey, key);
+  sessionStorage.removeItem(STORAGE.apiBaseUrl);
+  localStorage.removeItem(STORAGE.apiBaseUrl);
+  sessionStorage.removeItem(STORAGE.apiMode);
+  localStorage.removeItem(STORAGE.apiMode);
+
+  const target = remember ? localStorage : sessionStorage;
+  if (connection.apiKey) target.setItem(STORAGE.apiKey, connection.apiKey);
+  if (connection.apiBaseUrl) target.setItem(STORAGE.apiBaseUrl, connection.apiBaseUrl);
+  if (connection.apiMode) target.setItem(STORAGE.apiMode, connection.apiMode);
+}
+
+function parseNewApiConnection(value) {
+  const text = String(value || "").trim();
+  if (!text.startsWith("{")) return null;
+
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed?._type !== "newapi_channel_conn") return null;
+    return {
+      apiKey: String(parsed.key || "").trim(),
+      apiBaseUrl: String(parsed.url || "").trim(),
+      apiMode: "chat"
+    };
+  } catch {
+    return null;
+  }
+}
+
+function apiModeFor(baseUrl, selectedMode) {
+  if (selectedMode === "chat" || selectedMode === "responses") return selectedMode;
+  return baseUrl ? "chat" : "responses";
 }
 
 function createSession(title = "新对话") {
@@ -351,10 +394,15 @@ function renderPendingAttachments() {
 
 function renderHeader() {
   const session = activeSession();
+  const hasCustomBase = Boolean(state.apiBaseUrl);
   els.chatTitle.textContent = session?.title || "新对话";
-  els.chatMeta.textContent = state.settings.model;
+  els.chatMeta.textContent = `${state.settings.model}${hasCustomBase ? " · New API" : ""}`;
   els.modelSelect.value = state.settings.model;
-  els.keyStatus.textContent = state.useServerKey ? "服务器 Key" : state.apiKey ? "已登录" : "未登录";
+  els.keyStatus.textContent = state.useServerKey && !state.apiKey
+    ? "服务器 Key"
+    : state.apiKey
+      ? hasCustomBase ? "New API" : "已登录"
+      : "未登录";
 }
 
 function render() {
@@ -421,7 +469,8 @@ function titleFromPrompt(prompt) {
 }
 
 function buildRequestMessages(session) {
-  return session.messages.map((message, index, all) => {
+  const messages = session.messages.filter((message) => !message.pending);
+  return messages.map((message, index, all) => {
     if (message.role === "user" && index !== all.length - 1 && message.attachments?.length) {
       return {
         ...message,
@@ -498,6 +547,8 @@ async function streamAssistantResponse(session, assistantMessage) {
       reasoningEffort: state.settings.reasoningEffort,
       verbosity: state.settings.verbosity,
       webSearch: state.settings.webSearch,
+      apiBaseUrl: state.apiBaseUrl,
+      apiMode: state.apiMode,
       messages: buildRequestMessages(session),
       stream: true
     })
@@ -540,13 +591,15 @@ async function streamAssistantResponse(session, assistantMessage) {
 
 function openLoginModal() {
   els.apiKeyInput.value = state.apiKey || "";
+  els.apiBaseUrlInput.value = state.apiBaseUrl || "";
+  els.apiModeSelect.value = apiModeFor(state.apiBaseUrl, state.apiMode);
   els.rememberKeyInput.checked = Boolean(localStorage.getItem(STORAGE.apiKey));
   if (state.useServerKey) {
-    els.loginSubcopy.textContent = "服务器已配置 Key，也可以输入新的 Key 覆盖。";
-    els.apiKeyInput.placeholder = "可留空使用服务器 Key";
+    els.loginSubcopy.textContent = "服务器已配置 Key，也可以输入新的 Key 或 New API 配置覆盖。";
+    els.apiKeyInput.placeholder = "可留空使用服务器 Key，也可粘贴 newapi_channel_conn JSON";
   } else {
-    els.loginSubcopy.textContent = "输入你的 OpenAI API key。";
-    els.apiKeyInput.placeholder = "sk-...";
+    els.loginSubcopy.textContent = "输入 OpenAI API key，或直接粘贴 newapi_channel_conn JSON。";
+    els.apiKeyInput.placeholder = "sk-... 或 {\"_type\":\"newapi_channel_conn\",...}";
   }
   if (!els.loginModal.open) els.loginModal.showModal();
   requestAnimationFrame(() => els.apiKeyInput.focus());
@@ -607,7 +660,10 @@ function handleMessageAction(event) {
 async function init() {
   state.sessions = loadJson(STORAGE.sessions, []);
   state.settings = { ...state.settings, ...loadJson(STORAGE.settings, {}) };
-  state.apiKey = getStoredApiKey();
+  const connection = getStoredConnection();
+  state.apiKey = connection.apiKey;
+  state.apiBaseUrl = connection.apiBaseUrl;
+  state.apiMode = apiModeFor(connection.apiBaseUrl, connection.apiMode);
 
   const config = await fetch("/api/config").then((res) => res.json()).catch(() => ({}));
   state.useServerKey = Boolean(config.serverKeyAvailable);
@@ -632,7 +688,9 @@ els.newChatButton.addEventListener("click", newChat);
 els.settingsButton.addEventListener("click", openSettingsModal);
 els.logoutButton.addEventListener("click", () => {
   state.apiKey = "";
-  setStoredApiKey("", false);
+  state.apiBaseUrl = "";
+  state.apiMode = "responses";
+  setStoredConnection({}, false);
   openLoginModal();
   render();
 });
@@ -659,15 +717,40 @@ els.composer.addEventListener("submit", (event) => {
   event.preventDefault();
   if (!state.sending) sendMessage();
 });
+els.apiKeyInput.addEventListener("input", () => {
+  const parsed = parseNewApiConnection(els.apiKeyInput.value);
+  if (!parsed) return;
+  els.apiKeyInput.value = parsed.apiKey;
+  els.apiBaseUrlInput.value = parsed.apiBaseUrl;
+  els.apiModeSelect.value = "chat";
+  showToast("已识别 New API 配置");
+});
+els.apiBaseUrlInput.addEventListener("input", () => {
+  if (els.apiBaseUrlInput.value.trim() && els.apiModeSelect.value === "responses") {
+    els.apiModeSelect.value = "chat";
+  }
+});
 els.loginForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const key = els.apiKeyInput.value.trim();
+  const parsed = parseNewApiConnection(els.apiKeyInput.value);
+  const key = parsed?.apiKey || els.apiKeyInput.value.trim();
+  const apiBaseUrl = parsed?.apiBaseUrl || els.apiBaseUrlInput.value.trim();
+  const apiMode = apiModeFor(apiBaseUrl, parsed?.apiMode || els.apiModeSelect.value);
+
   if (!key && !state.useServerKey) {
     showToast("请输入 API key");
     return;
   }
+
+  if (els.apiKeyInput.value.trim().startsWith("{") && !parsed) {
+    showToast("New API JSON 格式不正确");
+    return;
+  }
+
   state.apiKey = key;
-  setStoredApiKey(key, els.rememberKeyInput.checked);
+  state.apiBaseUrl = apiBaseUrl;
+  state.apiMode = apiMode;
+  setStoredConnection({ apiKey: key, apiBaseUrl, apiMode }, els.rememberKeyInput.checked);
   els.loginModal.close();
   render();
 });

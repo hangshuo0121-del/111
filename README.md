@@ -20,6 +20,13 @@ http://localhost:8787
 
 默认在浏览器里输入 OpenAI API key。服务端不会把 key 写入磁盘，只在请求 OpenAI 时使用。
 
+也支持 New API / OpenAI 兼容中转：
+
+- 可以在登录窗口直接粘贴 `newapi_channel_conn` JSON，页面会自动填入 Key 和 API 地址。
+- 也可以手动填写 API 地址，并把接口类型改成 `OpenAI 兼容 / New API`。
+- 部署在 Render 这类公网服务器上时，API 地址必须是公网 HTTPS 地址。`http://localhost:3000` 只适合把本项目和 New API 都跑在同一台电脑上的本地调试。
+- 本地调试如需访问 `localhost` 或内网 API 地址，启动服务时设置 `ALLOW_PRIVATE_API_BASE=1`。
+
 也可以在服务器环境变量里设置：
 
 ```bash
@@ -32,6 +39,9 @@ OPENAI_API_KEY=sk-... node server.js
 PORT=8787
 HOST=0.0.0.0
 DEFAULT_MODEL=gpt-5.5
+OPENAI_BASE_URL=https://api.openai.com
+OPENAI_API_MODE=responses
+ALLOW_PRIVATE_API_BASE=1
 ```
 
 ## 部署提示

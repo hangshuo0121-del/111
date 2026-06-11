@@ -591,6 +591,13 @@ textarea:focus {
   font-weight: 500;
 }
 
+.field-help {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .check-row {
   display: flex;
   align-items: center;

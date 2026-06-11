@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#f7f4ed" />
     <title>Web Agent</title>
-    <link rel="stylesheet" href="/styles.css?v=20260611b" />
+    <link rel="stylesheet" href="/styles.css?v=20260611c" />
   </head>
   <body>
     <div id="app">
@@ -86,6 +86,18 @@
           <span>OpenAI API key</span>
           <input id="apiKeyInput" name="apiKey" type="password" autocomplete="off" placeholder="sk-..." />
         </label>
+        <label class="field">
+          <span>API 地址</span>
+          <input id="apiBaseUrlInput" name="apiBaseUrl" type="url" autocomplete="off" placeholder="留空使用 OpenAI，或填 New API 地址" />
+        </label>
+        <label class="field">
+          <span>接口类型</span>
+          <select id="apiModeSelect" name="apiMode">
+            <option value="responses">OpenAI Responses</option>
+            <option value="chat">OpenAI 兼容 / New API</option>
+          </select>
+        </label>
+        <p class="field-help">也可以直接把 newapi_channel_conn JSON 粘贴到 Key 输入框，会自动填入 Key 和 API 地址。</p>
         <label class="check-row">
           <input id="rememberKeyInput" type="checkbox" />
           <span>记住在这台设备上</span>
@@ -139,6 +151,6 @@
     </dialog>
 
     <div class="toast" id="toast" role="status"></div>
-    <script src="/app.js?v=20260611b" type="module"></script>
+    <script src="/app.js?v=20260611c" type="module"></script>
   </body>
 </html>
