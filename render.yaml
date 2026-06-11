@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: personal-web-agent
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/config
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: DEFAULT_MODEL
+        value: gpt-5.5

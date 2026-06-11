@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f7f4ed" />
+    <title>Web Agent</title>
+    <link rel="stylesheet" href="/styles.css?v=20260611b" />
+  </head>
+  <body>
+    <div id="app">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand-row">
+          <div class="brand-mark">A</div>
+          <div>
+            <h1>Web Agent</h1>
+            <p id="keyStatus">未登录</p>
+          </div>
+        </div>
+        <button class="primary-button full" id="newChatButton" type="button">新对话</button>
+        <nav class="sessions" id="sessionList" aria-label="对话"></nav>
+        <div class="sidebar-footer">
+          <button class="ghost-button full" id="settingsButton" type="button">设置</button>
+          <button class="ghost-button full" id="logoutButton" type="button">更换 Key</button>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <button class="icon-button mobile-only" id="menuButton" type="button" aria-label="打开对话列表">
+            <span></span><span></span><span></span>
+          </button>
+          <div>
+            <h2 id="chatTitle">新对话</h2>
+            <p id="chatMeta">gpt-5.5</p>
+          </div>
+          <div class="topbar-actions">
+            <select id="modelSelect" aria-label="模型">
+              <option value="gpt-5.5">gpt-5.5</option>
+              <option value="gpt-5.4">gpt-5.4</option>
+              <option value="gpt-5.2">gpt-5.2</option>
+              <option value="gpt-4.1">gpt-4.1</option>
+            </select>
+            <button class="ghost-button compact" id="exportChatButton" type="button">导出</button>
+          </div>
+        </header>
+
+        <section class="message-stage" id="messageStage" aria-live="polite">
+          <div class="empty-state" id="emptyState">
+            <div class="empty-orbit">
+              <span></span><span></span><span></span>
+            </div>
+            <h3>今天要处理什么？</h3>
+            <div class="prompt-grid">
+              <button type="button" data-prompt="帮我分析这份文件，并整理出结论、风险和下一步行动。">分析文件</button>
+              <button type="button" data-prompt="帮我生成一份可以下载的 Markdown 报告，结构清晰、可直接发送。">生成报告</button>
+              <button type="button" data-prompt="帮我写一个可运行的实现方案，并把关键文件用带文件名的代码块输出。">写代码</button>
+              <button type="button" data-prompt="帮我把下面内容润色成更清楚、更专业的版本：">润色文本</button>
+            </div>
+          </div>
+          <div class="messages" id="messages"></div>
+        </section>
+
+        <section class="composer-wrap">
+          <div class="drop-hint" id="dropHint">松开添加文件</div>
+          <div class="attachment-list" id="attachmentList"></div>
+          <form class="composer" id="composer">
+            <button class="icon-button attach-button" id="attachButton" type="button" aria-label="添加文件">+</button>
+            <textarea id="promptInput" rows="1" placeholder="输入消息"></textarea>
+            <button class="send-button" id="sendButton" type="submit" aria-label="发送">
+              <span>发送</span>
+            </button>
+            <input id="fileInput" type="file" multiple hidden />
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <dialog class="modal" id="loginModal">
+      <form method="dialog" class="modal-card" id="loginForm">
+        <div class="modal-header">
+          <h2>API Key 登录</h2>
+          <p id="loginSubcopy">输入你的 OpenAI API key。</p>
+        </div>
+        <label class="field">
+          <span>OpenAI API key</span>
+          <input id="apiKeyInput" name="apiKey" type="password" autocomplete="off" placeholder="sk-..." />
+        </label>
+        <label class="check-row">
+          <input id="rememberKeyInput" type="checkbox" />
+          <span>记住在这台设备上</span>
+        </label>
+        <div class="modal-actions">
+          <button class="primary-button" type="submit">进入</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="settingsModal">
+      <form method="dialog" class="modal-card settings-card" id="settingsForm">
+        <div class="modal-header">
+          <h2>设置</h2>
+          <p>调整默认行为和模型参数。</p>
+        </div>
+        <label class="field">
+          <span>系统指令</span>
+          <textarea id="instructionsInput" rows="5"></textarea>
+        </label>
+        <div class="settings-grid">
+          <label class="field">
+            <span>推理强度</span>
+            <select id="reasoningSelect">
+              <option value="">默认</option>
+              <option value="minimal">minimal</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>输出长度</span>
+            <select id="verbositySelect">
+              <option value="">默认</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+            </select>
+          </label>
+        </div>
+        <label class="check-row">
+          <input id="webSearchInput" type="checkbox" />
+          <span>启用网页搜索</span>
+        </label>
+        <div class="modal-actions split">
+          <button class="ghost-button" id="closeSettingsButton" type="button">取消</button>
+          <button class="primary-button" type="submit">保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status"></div>
+    <script src="/app.js?v=20260611b" type="module"></script>
+  </body>
+</html>
