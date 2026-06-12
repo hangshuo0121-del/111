@@ -9,6 +9,8 @@ const STORAGE = {
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 30 * 1024 * 1024;
+const DEFAULT_CLAUDE_MODEL = "claude-fable-5";
+const ANTHROPIC_API_BASE_URL = "https://api.anthropic.com";
 
 const els = {
   sidebar: document.querySelector("#sidebar"),
@@ -109,6 +111,19 @@ function setStoredConnection(connection, remember) {
   if (connection.apiMode) target.setItem(STORAGE.apiMode, connection.apiMode);
 }
 
+function isClaudeModel(model = "") {
+  return String(model).trim().toLowerCase().startsWith("claude-");
+}
+
+function isAnthropicBaseUrl(baseUrl = "") {
+  try {
+    const url = new URL(baseUrl || ANTHROPIC_API_BASE_URL);
+    return url.hostname === "api.anthropic.com";
+  } catch {
+    return false;
+  }
+}
+
 function parseNewApiConnection(value) {
   const text = String(value || "").trim();
   if (!text.startsWith("{")) return null;
@@ -126,8 +141,11 @@ function parseNewApiConnection(value) {
   }
 }
 
-function apiModeFor(baseUrl, selectedMode) {
-  if (selectedMode === "chat" || selectedMode === "responses") return selectedMode;
+function apiModeFor(baseUrl, selectedMode, model = state.settings.model) {
+  if (isClaudeModel(model) && selectedMode !== "chat" && (!baseUrl || isAnthropicBaseUrl(baseUrl))) {
+    return "anthropic";
+  }
+  if (selectedMode === "chat" || selectedMode === "responses" || selectedMode === "anthropic") return selectedMode;
   return baseUrl ? "chat" : "responses";
 }
 
@@ -395,13 +413,16 @@ function renderPendingAttachments() {
 function renderHeader() {
   const session = activeSession();
   const hasCustomBase = Boolean(state.apiBaseUrl);
+  const providerLabel = state.apiMode === "anthropic"
+    ? "Claude"
+    : hasCustomBase ? "New API" : "OpenAI";
   els.chatTitle.textContent = session?.title || "新对话";
-  els.chatMeta.textContent = `${state.settings.model}${hasCustomBase ? " · New API" : ""}`;
+  els.chatMeta.textContent = `${state.settings.model} · ${providerLabel}`;
   els.modelSelect.value = state.settings.model;
   els.keyStatus.textContent = state.useServerKey && !state.apiKey
     ? "服务器 Key"
     : state.apiKey
-      ? hasCustomBase ? "New API" : "已登录"
+      ? providerLabel
       : "未登录";
 }
 
@@ -592,14 +613,14 @@ async function streamAssistantResponse(session, assistantMessage) {
 function openLoginModal() {
   els.apiKeyInput.value = state.apiKey || "";
   els.apiBaseUrlInput.value = state.apiBaseUrl || "";
-  els.apiModeSelect.value = apiModeFor(state.apiBaseUrl, state.apiMode);
+  els.apiModeSelect.value = apiModeFor(state.apiBaseUrl, state.apiMode, state.settings.model);
   els.rememberKeyInput.checked = Boolean(localStorage.getItem(STORAGE.apiKey));
   if (state.useServerKey) {
-    els.loginSubcopy.textContent = "服务器已配置 Key，也可以输入新的 Key 或 New API 配置覆盖。";
+    els.loginSubcopy.textContent = "服务器已配置 Key，也可以输入新的 OpenAI、New API 或 Claude Key 覆盖。";
     els.apiKeyInput.placeholder = "可留空使用服务器 Key，也可粘贴 newapi_channel_conn JSON";
   } else {
-    els.loginSubcopy.textContent = "输入 OpenAI API key，或直接粘贴 newapi_channel_conn JSON。";
-    els.apiKeyInput.placeholder = "sk-... 或 {\"_type\":\"newapi_channel_conn\",...}";
+    els.loginSubcopy.textContent = "输入 OpenAI、New API 或 Anthropic Claude API key，也可粘贴 newapi_channel_conn JSON。";
+    els.apiKeyInput.placeholder = "sk-ant-... / sk-... / {\"_type\":\"newapi_channel_conn\",...}";
   }
   if (!els.loginModal.open) els.loginModal.showModal();
   requestAnimationFrame(() => els.apiKeyInput.focus());
@@ -663,7 +684,7 @@ async function init() {
   const connection = getStoredConnection();
   state.apiKey = connection.apiKey;
   state.apiBaseUrl = connection.apiBaseUrl;
-  state.apiMode = apiModeFor(connection.apiBaseUrl, connection.apiMode);
+  state.apiMode = apiModeFor(connection.apiBaseUrl, connection.apiMode, state.settings.model);
 
   const config = await fetch("/api/config").then((res) => res.json()).catch(() => ({}));
   state.useServerKey = Boolean(config.serverKeyAvailable);
@@ -689,7 +710,7 @@ els.settingsButton.addEventListener("click", openSettingsModal);
 els.logoutButton.addEventListener("click", () => {
   state.apiKey = "";
   state.apiBaseUrl = "";
-  state.apiMode = "responses";
+  state.apiMode = isClaudeModel(state.settings.model) ? "anthropic" : "responses";
   setStoredConnection({}, false);
   openLoginModal();
   render();
@@ -698,6 +719,11 @@ els.menuButton.addEventListener("click", () => els.sidebar.classList.toggle("ope
 els.exportChatButton.addEventListener("click", exportCurrentChat);
 els.modelSelect.addEventListener("change", () => {
   state.settings.model = els.modelSelect.value;
+  if (isClaudeModel(state.settings.model) && state.apiMode !== "chat") {
+    state.apiMode = "anthropic";
+  } else if (!isClaudeModel(state.settings.model) && state.apiMode === "anthropic" && !state.apiBaseUrl) {
+    state.apiMode = "responses";
+  }
   persist();
   renderHeader();
 });
@@ -730,12 +756,20 @@ els.apiBaseUrlInput.addEventListener("input", () => {
     els.apiModeSelect.value = "chat";
   }
 });
+els.apiModeSelect.addEventListener("change", () => {
+  if (els.apiModeSelect.value === "anthropic" && !isClaudeModel(state.settings.model)) {
+    state.settings.model = DEFAULT_CLAUDE_MODEL;
+    els.modelSelect.value = state.settings.model;
+    persist();
+    renderHeader();
+  }
+});
 els.loginForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const parsed = parseNewApiConnection(els.apiKeyInput.value);
   const key = parsed?.apiKey || els.apiKeyInput.value.trim();
   const apiBaseUrl = parsed?.apiBaseUrl || els.apiBaseUrlInput.value.trim();
-  const apiMode = apiModeFor(apiBaseUrl, parsed?.apiMode || els.apiModeSelect.value);
+  const apiMode = apiModeFor(apiBaseUrl, parsed?.apiMode || els.apiModeSelect.value, state.settings.model);
 
   if (!key && !state.useServerKey) {
     showToast("请输入 API key");
@@ -750,6 +784,10 @@ els.loginForm.addEventListener("submit", (event) => {
   state.apiKey = key;
   state.apiBaseUrl = apiBaseUrl;
   state.apiMode = apiMode;
+  if (state.apiMode === "anthropic" && !isClaudeModel(state.settings.model)) {
+    state.settings.model = DEFAULT_CLAUDE_MODEL;
+    persist();
+  }
   setStoredConnection({ apiKey: key, apiBaseUrl, apiMode }, els.rememberKeyInput.checked);
   els.loginModal.close();
   render();

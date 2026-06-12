@@ -8,7 +8,8 @@ const publicDir = join(__dirname, "public");
 const port = Number(process.env.PORT || 8787);
 const host = process.env.HOST || "0.0.0.0";
 const maxBodyBytes = 42 * 1024 * 1024;
-const officialApiBaseUrl = "https://api.openai.com";
+const officialOpenAiApiBaseUrl = "https://api.openai.com";
+const officialAnthropicApiBaseUrl = "https://api.anthropic.com";
 
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -67,12 +68,15 @@ function sanitizeApiKey(value = "") {
   return key;
 }
 
-function getBearerKey(req, body) {
+function getApiKey(req, body, apiMode) {
   const authorization = req.headers.authorization || "";
   const fromHeader = authorization.toLowerCase().startsWith("bearer ")
     ? authorization.slice(7)
     : "";
-  return sanitizeApiKey(fromHeader || body.apiKey || process.env.OPENAI_API_KEY || "");
+  const envKey = apiMode === "anthropic"
+    ? process.env.ANTHROPIC_API_KEY || process.env.API_KEY
+    : process.env.OPENAI_API_KEY || process.env.API_KEY;
+  return sanitizeApiKey(fromHeader || body.apiKey || envKey || "");
 }
 
 function isPrivateIPv4(hostname) {
@@ -104,8 +108,8 @@ function isBlockedApiHost(hostname) {
   );
 }
 
-function normalizeApiBaseUrl(value = "") {
-  const raw = String(value || process.env.OPENAI_BASE_URL || officialApiBaseUrl).trim();
+function normalizeApiBaseUrl(value = "", fallback = officialOpenAiApiBaseUrl) {
+  const raw = String(value || fallback).trim();
   if (!raw || raw.length > 400 || /[\r\n]/.test(raw)) {
     throw Object.assign(new Error("Invalid API base URL."), { statusCode: 400 });
   }
@@ -131,19 +135,37 @@ function normalizeApiBaseUrl(value = "") {
   pathname = pathname
     .replace(/\/v1\/responses$/i, "")
     .replace(/\/v1\/chat\/completions$/i, "")
+    .replace(/\/v1\/messages$/i, "")
     .replace(/\/v1$/i, "");
   url.pathname = pathname || "";
   return url.toString().replace(/\/+$/, "");
 }
 
-function getApiMode(body, apiBaseUrl) {
+function looksLikeClaudeModel(model = "") {
+  return compactText(model).trim().toLowerCase().startsWith("claude-");
+}
+
+function getRequestedApiMode(body) {
   const requested = compactText(body.apiMode).trim();
-  if (["responses", "chat"].includes(requested)) return requested;
+  if (["responses", "chat", "anthropic"].includes(requested)) return requested;
 
-  const configured = String(process.env.OPENAI_API_MODE || "").trim();
-  if (["responses", "chat"].includes(configured)) return configured;
+  const configured = String(process.env.API_MODE || process.env.OPENAI_API_MODE || "").trim();
+  if (["responses", "chat", "anthropic"].includes(configured)) return configured;
 
-  return apiBaseUrl === officialApiBaseUrl ? "responses" : "chat";
+  return "";
+}
+
+function defaultApiBaseUrlForMode(apiMode) {
+  if (apiMode === "anthropic") {
+    return process.env.ANTHROPIC_BASE_URL || officialAnthropicApiBaseUrl;
+  }
+  return process.env.OPENAI_BASE_URL || officialOpenAiApiBaseUrl;
+}
+
+function getApiMode(body, apiBaseUrl, requestedMode = "") {
+  if (requestedMode) return requestedMode;
+  if (looksLikeClaudeModel(body.model) || apiBaseUrl === officialAnthropicApiBaseUrl) return "anthropic";
+  return apiBaseUrl === officialOpenAiApiBaseUrl ? "responses" : "chat";
 }
 
 function compactText(value, fallback = "") {
@@ -213,6 +235,12 @@ function extractOutputText(payload) {
 function extractChatOutputText(payload) {
   return (Array.isArray(payload?.choices) ? payload.choices : [])
     .map((choice) => choice?.message?.content || choice?.text || "")
+    .join("");
+}
+
+function extractAnthropicOutputText(payload) {
+  return (Array.isArray(payload?.content) ? payload.content : [])
+    .map((block) => block?.type === "text" ? block.text || "" : "")
     .join("");
 }
 
@@ -297,6 +325,63 @@ function buildChatContentForMessage(message) {
   return textParts.join("\n\n") || "";
 }
 
+function dataUrlToAnthropicImageSource(dataUrl = "", mimeType = "") {
+  const match = String(dataUrl).match(/^data:([^;,]+)?(;base64)?,([\s\S]*)$/);
+  if (!match || !match[2]) return null;
+
+  const mediaType = mimeType || match[1] || "";
+  if (!["image/jpeg", "image/png", "image/gif", "image/webp"].includes(mediaType)) {
+    return null;
+  }
+
+  return {
+    type: "base64",
+    media_type: mediaType,
+    data: match[3] || ""
+  };
+}
+
+function buildAnthropicContentForMessage(message) {
+  if (message.role === "assistant") {
+    return compactText(message.content);
+  }
+
+  const content = [];
+  const text = compactText(message.content);
+  if (text) content.push({ type: "text", text });
+
+  for (const attachment of Array.isArray(message.attachments) ? message.attachments : []) {
+    if (!attachment?.dataUrl || !attachment?.name) continue;
+    const name = String(attachment.name).slice(0, 160);
+    const dataUrl = String(attachment.dataUrl);
+    const mimeType = String(attachment.type || "");
+
+    if (mimeType.startsWith("image/")) {
+      const source = dataUrlToAnthropicImageSource(dataUrl, mimeType);
+      if (source) {
+        content.push({ type: "image", source });
+        continue;
+      }
+    }
+
+    const fileText = dataUrlToText(dataUrl, mimeType);
+    content.push({
+      type: "text",
+      text: fileText
+        ? `Attached file: ${name}\n\n${fileText}`
+        : `Attached file omitted in Claude mode: ${name}`
+    });
+  }
+
+  return content.length ? content : [{ type: "text", text: "" }];
+}
+
+function getAnthropicMaxTokens() {
+  const value = Number(process.env.ANTHROPIC_MAX_TOKENS || 4096);
+  if (!Number.isFinite(value)) return 4096;
+  return Math.min(Math.max(Math.floor(value), 1), 128000);
+}
+
 function buildOpenAiPayload(body, stream) {
   const model = compactText(body.model, "gpt-5.5").trim() || "gpt-5.5";
   const input = normalizeMessages(body.messages);
@@ -347,9 +432,28 @@ function buildChatPayload(body, stream) {
   };
 }
 
+function buildAnthropicPayload(body, stream) {
+  const model = compactText(body.model, "claude-fable-5").trim() || "claude-fable-5";
+  const messages = (Array.isArray(body.messages) ? body.messages : [])
+    .filter((message) => message && ["user", "assistant"].includes(message.role))
+    .slice(-24)
+    .map((message) => ({
+      role: message.role,
+      content: buildAnthropicContentForMessage(message)
+    }));
+
+  return {
+    model,
+    max_tokens: getAnthropicMaxTokens(),
+    system: buildDeveloperInstructions(body).join("\n"),
+    messages,
+    stream
+  };
+}
+
 async function handleConfig(_req, res) {
   sendJson(res, 200, {
-    serverKeyAvailable: Boolean(process.env.OPENAI_API_KEY),
+    serverKeyAvailable: Boolean(process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.API_KEY),
     defaultModel: process.env.DEFAULT_MODEL || "gpt-5.5"
   });
 }
@@ -363,26 +467,30 @@ async function handleChat(req, res) {
     return;
   }
 
-  const apiKey = getBearerKey(req, body);
-  if (!apiKey) {
-    sendJson(res, 401, { error: "Missing API key." });
-    return;
-  }
-
+  const requestedMode = getRequestedApiMode(body);
+  const preferredMode = requestedMode || (looksLikeClaudeModel(body.model) ? "anthropic" : "");
   let apiBaseUrl;
   try {
-    apiBaseUrl = normalizeApiBaseUrl(body.apiBaseUrl);
+    apiBaseUrl = normalizeApiBaseUrl(body.apiBaseUrl, defaultApiBaseUrlForMode(preferredMode));
   } catch (error) {
     sendJson(res, error.statusCode || 400, { error: error.message });
     return;
   }
 
-  const apiMode = getApiMode(body, apiBaseUrl);
+  const apiMode = getApiMode(body, apiBaseUrl, requestedMode || preferredMode);
+  const apiKey = getApiKey(req, body, apiMode);
+  if (!apiKey) {
+    sendJson(res, 401, { error: "Missing API key." });
+    return;
+  }
+
   const stream = body.stream !== false;
-  const payload = apiMode === "chat"
-    ? buildChatPayload(body, stream)
-    : buildOpenAiPayload(body, stream);
-  const hasMessages = apiMode === "chat"
+  const payload = apiMode === "anthropic"
+    ? buildAnthropicPayload(body, stream)
+    : apiMode === "chat"
+      ? buildChatPayload(body, stream)
+      : buildOpenAiPayload(body, stream);
+  const hasMessages = apiMode === "anthropic" || apiMode === "chat"
     ? payload.messages.some((message) => message.role !== "system")
     : payload.input.length;
 
@@ -391,16 +499,25 @@ async function handleChat(req, res) {
     return;
   }
 
-  const endpoint = `${apiBaseUrl}/v1/${apiMode === "chat" ? "chat/completions" : "responses"}`;
+  const endpoint = apiMode === "anthropic"
+    ? `${apiBaseUrl}/v1/messages`
+    : `${apiBaseUrl}/v1/${apiMode === "chat" ? "chat/completions" : "responses"}`;
+  const headers = apiMode === "anthropic"
+    ? {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
+      }
+    : {
+        "content-type": "application/json",
+        "authorization": `Bearer ${apiKey}`
+      };
 
   let upstream;
   try {
     upstream = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "authorization": `Bearer ${apiKey}`
-      },
+      headers,
       body: JSON.stringify(payload)
     });
   } catch (error) {
@@ -420,7 +537,11 @@ async function handleChat(req, res) {
   if (payload.stream === false) {
     const json = await upstream.json();
     sendJson(res, 200, {
-      text: apiMode === "chat" ? extractChatOutputText(json) : extractOutputText(json),
+      text: apiMode === "anthropic"
+        ? extractAnthropicOutputText(json)
+        : apiMode === "chat"
+          ? extractChatOutputText(json)
+          : extractOutputText(json),
       responseId: json.id,
       model: json.model,
       usage: json.usage || null
@@ -457,7 +578,19 @@ async function handleChat(req, res) {
             continue;
           }
 
-          if (apiMode === "chat") {
+          if (apiMode === "anthropic") {
+            if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
+              res.write(`event: delta\ndata: ${JSON.stringify({ text: event.delta.text || "" })}\n\n`);
+            }
+
+            if (event.type === "message_stop") {
+              res.write(`event: done\ndata: ${JSON.stringify({})}\n\n`);
+            }
+
+            if (event.type === "error") {
+              res.write(`event: error\ndata: ${JSON.stringify({ error: event.error?.message || "Claude stream failed." })}\n\n`);
+            }
+          } else if (apiMode === "chat") {
             const text = (Array.isArray(event.choices) ? event.choices : [])
               .map((choice) => choice?.delta?.content || "")
               .join("");

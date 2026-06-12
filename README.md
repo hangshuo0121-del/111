@@ -41,6 +41,10 @@ HOST=0.0.0.0
 DEFAULT_MODEL=gpt-5.5
 OPENAI_BASE_URL=https://api.openai.com
 OPENAI_API_MODE=responses
+API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_BASE_URL=https://api.anthropic.com
+ANTHROPIC_MAX_TOKENS=4096
 ALLOW_PRIVATE_API_BASE=1
 ```
 
@@ -70,6 +74,6 @@ https://personal-web-agent.onrender.com
 
 默认在浏览器里输入 OpenAI API key。服务端不会把 key 写入磁盘，只在请求 OpenAI 时使用。
 
-如果你想让所有设备都不用重复输入 key，可以在 Render 的环境变量里设置 `OPENAI_API_KEY`。这样更方便，但任何拿到网页地址的人都可能消耗你的额度，所以公网使用前建议再加一层访问密码或账号系统。
+如果你想让所有设备都不用重复输入 key，可以在 Render 的环境变量里设置 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 或 `API_KEY`。这样更方便，但任何拿到网页地址的人都可能消耗你的额度，所以公网使用前建议再加一层访问密码或账号系统。
 
 真正独立的自定义域名，比如 `.com`、`.net`，通常不是永久免费。后续如果你买了域名，可以在 Render 里添加 Custom Domain，Render 会自动配置 HTTPS。
